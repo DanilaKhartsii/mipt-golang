@@ -1,0 +1,27 @@
+# Скомпилированные бинарники
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+new-proj
+
+# Артефакты тестов и покрытия
+*.test
+*.out
+coverage.html
+
+# Зависимости, если вдруг появится go mod vendor
+/vendor/
+
+# Настройки IDE
+.idea/
+.vscode/
+*.iml
+
+# macOS
+.DS_Store
+
+# Секреты и локальное окружение
+.env
+.env.local
