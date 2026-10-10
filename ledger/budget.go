@@ -19,12 +19,19 @@ var ErrBudgetExceeded = errors.New("превышен бюджет")
 
 var budgets = map[string]Budget{}
 
-func SetBudget(b Budget) error {
+func (b Budget) Validate() error {
 	if b.Category == "" {
 		return errors.New("категория бюджета не может быть пустой")
 	}
 	if b.Limit <= 0 {
 		return errors.New("лимит бюджета должен быть больше 0")
+	}
+	return nil
+}
+
+func SetBudget(b Budget) error {
+	if err := b.Validate(); err != nil {
+		return err
 	}
 
 	budgets[b.Category] = b

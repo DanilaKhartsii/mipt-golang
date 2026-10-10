@@ -15,9 +15,22 @@ type Transaction struct {
 
 var transactions = []Transaction{}
 
+func (tx Transaction) Validate() error {
+	if tx.Amount <= 0 {
+		return errors.New("сумма транзакции должна быть больше 0")
+	}
+	if tx.Category == "" {
+		return errors.New("категория транзакции не может быть пустой")
+	}
+	if tx.Date.IsZero() {
+		return errors.New("дата транзакции не указана")
+	}
+	return nil
+}
+
 func AddTransaction(tx Transaction) error {
-	if tx.Amount == 0 {
-		return errors.New("сумма транзакции не может быть равна 0")
+	if err := tx.Validate(); err != nil {
+		return err
 	}
 	if err := checkBudget(tx); err != nil {
 		return err
