@@ -1,4 +1,4 @@
-package main
+package ledger
 
 import (
 	"encoding/json"
@@ -34,6 +34,9 @@ func SetBudget(b Budget) error {
 		return err
 	}
 
+	mu.Lock()
+	defer mu.Unlock()
+
 	budgets[b.Category] = b
 	return nil
 }
@@ -58,12 +61,22 @@ func LoadBudgets(r io.Reader) error {
 }
 
 func ListBudgets() []Budget {
+	mu.RLock()
+	defer mu.RUnlock()
+
 	return slices.SortedFunc(maps.Values(budgets), func(a, b Budget) int {
 		return strings.Compare(a.Category, b.Category)
 	})
 }
 
 func CategoryTotal(category string) float64 {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	return categoryTotal(category)
+}
+
+func categoryTotal(category string) float64 {
 	var total float64
 	for _, tx := range transactions {
 		if tx.Category == category {
@@ -79,7 +92,7 @@ func checkBudget(tx Transaction) error {
 		return nil
 	}
 
-	total := CategoryTotal(tx.Category) + tx.Amount
+	total := categoryTotal(tx.Category) + tx.Amount
 	if total > b.Limit {
 		return fmt.Errorf("%w по категории «%s»: %.2f из %.2f", ErrBudgetExceeded, tx.Category, total, b.Limit)
 	}

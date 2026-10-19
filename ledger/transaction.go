@@ -1,7 +1,8 @@
-package main
+package ledger
 
 import (
 	"errors"
+	"sync"
 	"time"
 )
 
@@ -13,7 +14,11 @@ type Transaction struct {
 	Date        time.Time
 }
 
-var transactions = []Transaction{}
+var (
+	// mu защищает transactions и budgets от одновременного доступа из HTTP-обработчиков.
+	mu           sync.RWMutex
+	transactions = []Transaction{}
+)
 
 func (tx Transaction) Validate() error {
 	if tx.Amount <= 0 {
@@ -28,20 +33,27 @@ func (tx Transaction) Validate() error {
 	return nil
 }
 
-func AddTransaction(tx Transaction) error {
+func AddTransaction(tx Transaction) (Transaction, error) {
 	if err := tx.Validate(); err != nil {
-		return err
+		return Transaction{}, err
 	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
 	if err := checkBudget(tx); err != nil {
-		return err
+		return Transaction{}, err
 	}
 
 	tx.ID = len(transactions) + 1
 	transactions = append(transactions, tx)
-	return nil
+	return tx, nil
 }
 
 func ListTransactions() []Transaction {
+	mu.RLock()
+	defer mu.RUnlock()
+
 	result := make([]Transaction, len(transactions))
 	copy(result, transactions)
 	return result
