@@ -1,4 +1,4 @@
-package main
+package ledger
 
 type Validatable interface {
 	Validate() error

@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"ledger"
 )
 
 const budgetsFile = "budgets.json"
@@ -15,26 +17,26 @@ func main() {
 	fmt.Println("Ledger service started")
 
 	fmt.Println("Проверка CheckValid для разных типов:")
-	checkValid("Транзакция «Кофе»", Transaction{Amount: 250, Category: "Еда", Description: "Кофе", Date: time.Now()})
-	checkValid("Транзакция без даты", Transaction{Amount: 250, Category: "Еда", Description: "Кофе"})
-	checkValid("Бюджет «Спорт»", Budget{Category: "Спорт", Limit: 2000})
-	checkValid("Бюджет с отрицательным лимитом", Budget{Category: "Спорт", Limit: -100})
+	checkValid("Транзакция «Кофе»", ledger.Transaction{Amount: 250, Category: "Еда", Description: "Кофе", Date: time.Now()})
+	checkValid("Транзакция без даты", ledger.Transaction{Amount: 250, Category: "Еда", Description: "Кофе"})
+	checkValid("Бюджет «Спорт»", ledger.Budget{Category: "Спорт", Limit: 2000})
+	checkValid("Бюджет с отрицательным лимитом", ledger.Budget{Category: "Спорт", Limit: -100})
 
-	if err := SetBudget(Budget{Category: "Еда", Limit: 5000}); err != nil {
+	if err := ledger.SetBudget(ledger.Budget{Category: "Еда", Limit: 5000}); err != nil {
 		fmt.Printf("Ошибка установки бюджета: %v\n", err)
 	}
-	if err := SetBudget(Budget{Category: "", Limit: 1000}); err != nil {
+	if err := ledger.SetBudget(ledger.Budget{Category: "", Limit: 1000}); err != nil {
 		fmt.Printf("Ожидаемая ошибка установки бюджета: %v\n", err)
 	}
 	if err := loadBudgetsFromFile(budgetsFile); err != nil {
 		fmt.Printf("Ошибка загрузки бюджетов: %v\n", err)
 	}
-	if err := LoadBudgets(strings.NewReader(`[{"category": "Еда", "limit": "много"}]`)); err != nil {
+	if err := ledger.LoadBudgets(strings.NewReader(`[{"category": "Еда", "limit": "много"}]`)); err != nil {
 		fmt.Printf("Ожидаемая ошибка загрузки некорректного JSON: %v\n", err)
 	}
-	printBudgets(ListBudgets())
+	printBudgets(ledger.ListBudgets())
 
-	testTransactions := []Transaction{
+	testTransactions := []ledger.Transaction{
 		{Amount: 350.50, Category: "Еда", Description: "Обед в кафе", Date: time.Now()},
 		{Amount: 4500, Category: "Еда", Description: "Продукты на месяц", Date: time.Now()},
 		{Amount: 800, Category: "Еда", Description: "Ужин в ресторане", Date: time.Now()},
@@ -48,15 +50,15 @@ func main() {
 	for _, tx := range testTransactions {
 		addTransaction(tx)
 	}
-	printBudgets(ListBudgets())
-	printTransactions(ListTransactions())
+	printBudgets(ledger.ListBudgets())
+	printTransactions(ledger.ListTransactions())
 
 	fmt.Println("Увеличиваем бюджет «Еда» до 6000 и повторяем отклонённую транзакцию")
-	if err := SetBudget(Budget{Category: "Еда", Limit: 6000}); err != nil {
+	if err := ledger.SetBudget(ledger.Budget{Category: "Еда", Limit: 6000}); err != nil {
 		fmt.Printf("Ошибка установки бюджета: %v\n", err)
 	}
 	addTransaction(testTransactions[2])
-	printBudgets(ListBudgets())
+	printBudgets(ledger.ListBudgets())
 }
 
 func loadBudgetsFromFile(path string) error {
@@ -66,21 +68,21 @@ func loadBudgetsFromFile(path string) error {
 	}
 	defer file.Close()
 
-	return LoadBudgets(bufio.NewReader(file))
+	return ledger.LoadBudgets(bufio.NewReader(file))
 }
 
-func checkValid(name string, v Validatable) {
-	if err := CheckValid(v); err != nil {
+func checkValid(name string, v ledger.Validatable) {
+	if err := ledger.CheckValid(v); err != nil {
 		fmt.Printf("  %s: некорректно — %v\n", name, err)
 		return
 	}
 	fmt.Printf("  %s: корректно\n", name)
 }
 
-func addTransaction(tx Transaction) {
-	err := AddTransaction(tx)
+func addTransaction(tx ledger.Transaction) {
+	_, err := ledger.AddTransaction(tx)
 	switch {
-	case errors.Is(err, ErrBudgetExceeded):
+	case errors.Is(err, ledger.ErrBudgetExceeded):
 		fmt.Printf("Отказ «%s»: %v\n", tx.Description, err)
 	case err != nil:
 		fmt.Printf("Ошибка добавления «%s»: %v\n", tx.Description, err)
@@ -89,14 +91,14 @@ func addTransaction(tx Transaction) {
 	}
 }
 
-func printBudgets(budgets []Budget) {
+func printBudgets(budgets []ledger.Budget) {
 	fmt.Printf("Бюджеты (%d):\n", len(budgets))
 	for _, b := range budgets {
-		fmt.Printf("  %-12s | %10.2f из %10.2f\n", b.Category, CategoryTotal(b.Category), b.Limit)
+		fmt.Printf("  %-12s | %10.2f из %10.2f\n", b.Category, ledger.CategoryTotal(b.Category), b.Limit)
 	}
 }
 
-func printTransactions(transactions []Transaction) {
+func printTransactions(transactions []ledger.Transaction) {
 	fmt.Printf("Транзакции (%d):\n", len(transactions))
 	for _, tx := range transactions {
 		fmt.Printf("  #%d | %s | %-12s | %10.2f | %s\n",
