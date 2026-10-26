@@ -83,3 +83,40 @@ go run ./cmd/ledger
 - `409 Conflict` — `{"error":"budget exceeded"}`, транзакция превышает бюджет категории;
 - `404 Not Found` / `405 Method Not Allowed` — неизвестный путь или метод;
 - `500 Internal Server Error` — прочие внутренние ошибки.
+
+## hw-6
+
+Тесты на стандартной библиотеке (`testing`, `net/http/httptest`), без внешних зависимостей.
+
+- `ledger/ledger_test.go` — unit-тесты домена: табличные проверки `Transaction.Validate()` и `Budget.Validate()`,
+  сценарии добавления транзакций с бюджетом категории (в пределах лимита, ровно лимит, превышение, другая категория).
+- `gateway/internal/api/handlers_test.go` — интеграционные тесты HTTP-слоя через `NewRouter()`:
+  `POST/GET /api/budgets`, `POST/GET /api/transactions`, маппинг ошибок `400` и `409`, заголовок `Content-Type`.
+
+Хранилище ledger общее для всех тестов, поэтому тесты, которые его меняют, вызывают `ledger.Reset()`
+в начале каждого подтеста и в `t.Cleanup()`.
+
+### Запуск тестов
+
+`ledger` и `gateway` — отдельные модули, тесты запускаются в каждом из них:
+
+```bash
+cd ledger
+go test ./... -cover -coverprofile=cover.out
+go tool cover -html=cover.out -o cover.html
+
+cd ../gateway
+go test ./... -cover -coverprofile=cover.out
+go tool cover -html=cover.out -o cover.html
+```
+
+Подробный отчёт по подтестам — с флагом `-v`.
+
+### Покрытие
+
+| Пакет                  | Покрытие |
+|------------------------|----------|
+| `ledger`               | 71.2%    |
+| `gateway/internal/api` | 88.4%    |
+
+Пакеты `main` (`ledger/cmd/ledger`, `gateway`) тестами не покрыты.
