@@ -10,6 +10,7 @@ new-proj
 *.test
 *.out
 coverage.html
+cover.html
 
 # Зависимости, если вдруг появится go mod vendor
 /vendor/
