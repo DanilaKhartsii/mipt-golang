@@ -120,3 +120,19 @@ go tool cover -html=cover.out -o cover.html
 | `gateway/internal/api` | 88.4%    |
 
 Пакеты `main` (`ledger/cmd/ledger`, `gateway`) тестами не покрыты.
+
+## hw-7
+
+Ledger хранит данные в PostgreSQL вместо памяти, а отчёты кеширует в Redis на короткий TTL.
+Gateway обращается к тем же HTTP-эндпоинтам с прежними контрактами. Добавлен только `GET /api/reports/summary`
+для проверки кеша, а при старте вызывается `ledger.Init()` для подключения к PostgreSQL и Redis.
+
+- `ledger/migrations` — миграции Goose для таблиц `budgets` и `expenses`;
+- `ledger/internal/db`, `ledger/internal/cache` — подключение к PostgreSQL (`pgx`) и Redis (`go-redis/v9`);
+- `SetBudget`, `ListBudgets`, `AddTransaction`, `ListTransactions` работают через SQL,
+  `GetReportSummary` кеширует результат в `report:summary:<from>:<to>` на 30 секунд.
+
+Порядок запуска: PostgreSQL и Redis → `goose -dir ./ledger/migrations postgres "$DATABASE_URL" up` → Gateway.
+Подробности, переменные окружения и примеры cURL — в [ledger/README.md](ledger/README.md) и [gateway/README.md](gateway/README.md).
+
+Тестам хранилища нужна отдельная БД в `TEST_DATABASE_URL`; без неё они пропускаются.

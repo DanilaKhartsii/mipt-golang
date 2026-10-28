@@ -39,7 +39,13 @@ func createTransaction(w http.ResponseWriter, r *http.Request) {
 }
 
 func listTransactions(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, newTransactionResponses(ledger.ListTransactions()))
+	transactions, err := ledger.ListTransactions()
+	if err != nil {
+		log.Printf("не удалось получить транзакции: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, newTransactionResponses(transactions))
 }
 
 func createBudget(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +70,29 @@ func createBudget(w http.ResponseWriter, r *http.Request) {
 }
 
 func listBudgets(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, newBudgetResponses(ledger.ListBudgets()))
+	budgets, err := ledger.ListBudgets()
+	if err != nil {
+		log.Printf("не удалось получить бюджеты: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, newBudgetResponses(budgets))
+}
+
+func reportSummary(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseReportPeriod(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	report, err := ledger.GetReportSummary(r.Context(), from, to)
+	if err != nil {
+		log.Printf("не удалось построить отчёт: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, newReportSummaryResponse(report))
 }
 
 func ping(w http.ResponseWriter, _ *http.Request) {

@@ -12,6 +12,8 @@ func NewRouter() http.Handler {
 	api.HandleFunc("POST /budgets", createBudget)
 	api.HandleFunc("GET /budgets", listBudgets)
 	api.HandleFunc("/budgets", methodNotAllowed(http.MethodGet, http.MethodPost))
+	api.HandleFunc("GET /reports/summary", reportSummary)
+	api.HandleFunc("/reports/summary", methodNotAllowed(http.MethodGet))
 	api.HandleFunc("/", notFound)
 
 	mux := http.NewServeMux()

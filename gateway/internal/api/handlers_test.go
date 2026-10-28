@@ -1,9 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -13,7 +16,17 @@ import (
 
 const jsonContentType = "application/json; charset=utf-8"
 
-// Тесты работают с общим хранилищем ledger, поэтому не параллельные и сбрасывают состояние в каждом подтесте.
+// Тесты работают с общей тестовой БД ledger, поэтому не параллельные и сбрасывают состояние в каждом подтесте.
+// Без TEST_DATABASE_URL тесты, которым нужна БД, пропускаются; проверки ответов 400 работают и без неё.
+
+func TestMain(m *testing.M) {
+	if dsn := os.Getenv("TEST_DATABASE_URL"); dsn != "" {
+		if err := ledger.InitDB(context.Background(), dsn); err != nil {
+			log.Fatalf("не удалось подключиться к тестовой БД: %v", err)
+		}
+	}
+	os.Exit(m.Run())
+}
 
 func TestBudgetsAPI(t *testing.T) {
 	t.Run("create", func(t *testing.T) {
@@ -53,8 +66,6 @@ func TestBudgetsAPI(t *testing.T) {
 	}
 	for _, tt := range badRequests {
 		t.Run(tt.name, func(t *testing.T) {
-			resetLedger(t)
-
 			rec := doRequest(t, http.MethodPost, "/api/budgets", tt.body)
 			checkError(t, rec, http.StatusBadRequest)
 		})
@@ -109,7 +120,11 @@ func TestTransactionsAPI(t *testing.T) {
 		if got := decodeResponse[errorResponse](t, rec); got != want {
 			t.Errorf("body = %+v, want %+v", got, want)
 		}
-		if got := len(ledger.ListTransactions()); got != 1 {
+		transactions, err := ledger.ListTransactions()
+		if err != nil {
+			t.Fatalf("ledger.ListTransactions() error = %v, want nil", err)
+		}
+		if got := len(transactions); got != 1 {
 			t.Errorf("len(ledger.ListTransactions()) = %d, want 1", got)
 		}
 	})
@@ -126,9 +141,52 @@ func TestTransactionsAPI(t *testing.T) {
 	}
 	for _, tt := range badRequests {
 		t.Run(tt.name, func(t *testing.T) {
-			resetLedger(t)
-
 			rec := doRequest(t, http.MethodPost, "/api/transactions", tt.body)
+			checkError(t, rec, http.StatusBadRequest)
+		})
+	}
+}
+
+func TestReportSummaryAPI(t *testing.T) {
+	t.Run("ok", func(t *testing.T) {
+		resetLedger(t)
+		checkResponse(t, doRequest(t, http.MethodPost, "/api/transactions",
+			`{"amount":1500,"category":"еда","date":"2026-10-26"}`), http.StatusCreated)
+		checkResponse(t, doRequest(t, http.MethodPost, "/api/transactions",
+			`{"amount":300,"category":"транспорт","date":"2026-10-27"}`), http.StatusCreated)
+		checkResponse(t, doRequest(t, http.MethodPost, "/api/transactions",
+			`{"amount":700,"category":"еда","date":"2026-11-05"}`), http.StatusCreated)
+
+		rec := doRequest(t, http.MethodGet, "/api/reports/summary?from=2026-10-01&to=2026-10-31", "")
+		checkResponse(t, rec, http.StatusOK)
+
+		got := decodeResponse[ReportSummaryResponse](t, rec)
+		want := ReportSummaryResponse{
+			From: "2026-10-01",
+			To:   "2026-10-31",
+			Categories: []CategorySummaryResponse{
+				{Category: "еда", Total: 1500},
+				{Category: "транспорт", Total: 300},
+			},
+			Total: 1800,
+		}
+		if got.From != want.From || got.To != want.To || got.Total != want.Total || !slices.Equal(got.Categories, want.Categories) {
+			t.Errorf("body = %+v, want %+v", got, want)
+		}
+	})
+
+	badRequests := []struct {
+		name  string
+		query string
+	}{
+		{name: "missing_from", query: "?to=2026-10-31"},
+		{name: "missing_to", query: "?from=2026-10-01"},
+		{name: "invalid_date", query: "?from=01.10.2026&to=2026-10-31"},
+		{name: "from_after_to", query: "?from=2026-10-31&to=2026-10-01"},
+	}
+	for _, tt := range badRequests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := doRequest(t, http.MethodGet, "/api/reports/summary"+tt.query, "")
 			checkError(t, rec, http.StatusBadRequest)
 		})
 	}
@@ -137,8 +195,20 @@ func TestTransactionsAPI(t *testing.T) {
 func resetLedger(t *testing.T) {
 	t.Helper()
 
-	ledger.Reset()
-	t.Cleanup(ledger.Reset)
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL не задана, тест с БД пропущен")
+	}
+
+	mustResetLedger(t)
+	t.Cleanup(func() { mustResetLedger(t) })
+}
+
+func mustResetLedger(t *testing.T) {
+	t.Helper()
+
+	if err := ledger.Reset(); err != nil {
+		t.Fatalf("ledger.Reset() error = %v, want nil", err)
+	}
 }
 
 func mustCreateBudget(t *testing.T, body string) {
