@@ -2,7 +2,7 @@ package ledger
 
 import (
 	"errors"
-	"sync"
+	"fmt"
 	"time"
 )
 
@@ -13,12 +13,6 @@ type Transaction struct {
 	Description string
 	Date        time.Time
 }
-
-var (
-	// mu защищает transactions и budgets от одновременного доступа из HTTP-обработчиков.
-	mu           sync.RWMutex
-	transactions = []Transaction{}
-)
 
 func (tx Transaction) Validate() error {
 	if tx.Amount <= 0 {
@@ -33,28 +27,46 @@ func (tx Transaction) Validate() error {
 	return nil
 }
 
+// AddTransaction сохраняет транзакцию и возвращает её с ID из БД.
+// Проверка бюджета и вставка выполняются без транзакции БД — для учебной задачи этого достаточно.
 func AddTransaction(tx Transaction) (Transaction, error) {
 	if err := tx.Validate(); err != nil {
 		return Transaction{}, err
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-
 	if err := checkBudget(tx); err != nil {
 		return Transaction{}, err
 	}
 
-	tx.ID = len(transactions) + 1
-	transactions = append(transactions, tx)
+	err := sqlDB.QueryRow(
+		`INSERT INTO expenses (amount, category, description, date) VALUES ($1, $2, $3, $4) RETURNING id`,
+		tx.Amount, tx.Category, tx.Description, tx.Date,
+	).Scan(&tx.ID)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("не удалось сохранить транзакцию: %w", err)
+	}
 	return tx, nil
 }
 
-func ListTransactions() []Transaction {
-	mu.RLock()
-	defer mu.RUnlock()
+func ListTransactions() ([]Transaction, error) {
+	rows, err := sqlDB.Query(
+		`SELECT id, amount, category, COALESCE(description, ''), date FROM expenses ORDER BY date DESC, id DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось получить транзакции: %w", err)
+	}
+	defer rows.Close()
 
-	result := make([]Transaction, len(transactions))
-	copy(result, transactions)
-	return result
+	result := []Transaction{}
+	for rows.Next() {
+		var tx Transaction
+		if err := rows.Scan(&tx.ID, &tx.Amount, &tx.Category, &tx.Description, &tx.Date); err != nil {
+			return nil, fmt.Errorf("не удалось прочитать транзакцию: %w", err)
+		}
+		result = append(result, tx)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("не удалось получить транзакции: %w", err)
+	}
+	return result, nil
 }

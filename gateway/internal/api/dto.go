@@ -1,7 +1,9 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
 	"time"
 
 	"ledger"
@@ -30,6 +32,18 @@ type CreateBudgetRequest struct {
 type BudgetResponse struct {
 	Category string  `json:"category"`
 	Limit    float64 `json:"limit"`
+}
+
+type CategorySummaryResponse struct {
+	Category string  `json:"category"`
+	Total    float64 `json:"total"`
+}
+
+type ReportSummaryResponse struct {
+	From       string                    `json:"from"`
+	To         string                    `json:"to"`
+	Categories []CategorySummaryResponse `json:"categories"`
+	Total      float64                   `json:"total"`
 }
 
 func (r CreateTransactionRequest) toTransaction() (ledger.Transaction, error) {
@@ -88,4 +102,50 @@ func newBudgetResponses(budgets []ledger.Budget) []BudgetResponse {
 		result = append(result, newBudgetResponse(b))
 	}
 	return result
+}
+
+// parseReportPeriod читает обязательные параметры from и to в формате ГГГГ-ММ-ДД.
+func parseReportPeriod(query url.Values) (time.Time, time.Time, error) {
+	from, err := parseQueryDate(query, "from")
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	to, err := parseQueryDate(query, "to")
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if from.After(to) {
+		return time.Time{}, time.Time{}, errors.New("начало периода from не может быть позже конца периода to")
+	}
+	return from, to, nil
+}
+
+func parseQueryDate(query url.Values, name string) (time.Time, error) {
+	value := query.Get(name)
+	if value == "" {
+		return time.Time{}, fmt.Errorf("не указан параметр %s", name)
+	}
+
+	date, err := time.Parse(time.DateOnly, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("параметр %s должен быть в формате ГГГГ-ММ-ДД: %q", name, value)
+	}
+	return date, nil
+}
+
+func newReportSummaryResponse(report ledger.ReportSummary) ReportSummaryResponse {
+	categories := make([]CategorySummaryResponse, 0, len(report.Categories))
+	for _, s := range report.Categories {
+		categories = append(categories, CategorySummaryResponse{
+			Category: s.Category,
+			Total:    s.Total,
+		})
+	}
+
+	return ReportSummaryResponse{
+		From:       report.From.Format(time.DateOnly),
+		To:         report.To.Format(time.DateOnly),
+		Categories: categories,
+		Total:      report.Total,
+	}
 }

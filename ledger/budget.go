@@ -1,13 +1,13 @@
 package ledger
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"maps"
-	"slices"
-	"strings"
+	"time"
 )
 
 type Budget struct {
@@ -17,7 +17,10 @@ type Budget struct {
 
 var ErrBudgetExceeded = errors.New("превышен бюджет")
 
-var budgets = map[string]Budget{}
+const (
+	budgetsCacheKey = "budgets:all"
+	budgetsCacheTTL = 30 * time.Second
+)
 
 func (b Budget) Validate() error {
 	if b.Category == "" {
@@ -34,10 +37,16 @@ func SetBudget(b Budget) error {
 		return err
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
+	_, err := sqlDB.Exec(
+		`INSERT INTO budgets (category, limit_amount) VALUES ($1, $2)
+		 ON CONFLICT (category) DO UPDATE SET limit_amount = EXCLUDED.limit_amount`,
+		b.Category, b.Limit,
+	)
+	if err != nil {
+		return fmt.Errorf("не удалось сохранить бюджет «%s»: %w", b.Category, err)
+	}
 
-	budgets[b.Category] = b
+	deleteCache(context.Background(), budgetsCacheKey)
 	return nil
 }
 
@@ -60,41 +69,64 @@ func LoadBudgets(r io.Reader) error {
 	return nil
 }
 
-func ListBudgets() []Budget {
-	mu.RLock()
-	defer mu.RUnlock()
+func ListBudgets() ([]Budget, error) {
+	ctx := context.Background()
 
-	return slices.SortedFunc(maps.Values(budgets), func(a, b Budget) int {
-		return strings.Compare(a.Category, b.Category)
-	})
-}
-
-func CategoryTotal(category string) float64 {
-	mu.RLock()
-	defer mu.RUnlock()
-
-	return categoryTotal(category)
-}
-
-func categoryTotal(category string) float64 {
-	var total float64
-	for _, tx := range transactions {
-		if tx.Category == category {
-			total += tx.Amount
-		}
+	var cached []Budget
+	if readCache(ctx, budgetsCacheKey, &cached) {
+		return cached, nil
 	}
-	return total
+
+	rows, err := sqlDB.QueryContext(ctx, `SELECT category, limit_amount FROM budgets ORDER BY category`)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось получить бюджеты: %w", err)
+	}
+	defer rows.Close()
+
+	result := []Budget{}
+	for rows.Next() {
+		var b Budget
+		if err := rows.Scan(&b.Category, &b.Limit); err != nil {
+			return nil, fmt.Errorf("не удалось прочитать бюджет: %w", err)
+		}
+		result = append(result, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("не удалось получить бюджеты: %w", err)
+	}
+
+	writeCache(ctx, budgetsCacheKey, result, budgetsCacheTTL)
+	return result, nil
 }
 
+func CategoryTotal(category string) (float64, error) {
+	var total float64
+	err := sqlDB.QueryRow(`SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE category = $1`, category).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("не удалось посчитать расходы по категории «%s»: %w", category, err)
+	}
+	return total, nil
+}
+
+// checkBudget проверяет, что транзакция не превысит бюджет категории. Категории без бюджета не ограничены.
 func checkBudget(tx Transaction) error {
-	b, ok := budgets[tx.Category]
-	if !ok {
+	var limit float64
+	err := sqlDB.QueryRow(`SELECT limit_amount FROM budgets WHERE category = $1`, tx.Category).Scan(&limit)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("не удалось получить бюджет категории «%s»: %w", tx.Category, err)
+	}
 
-	total := categoryTotal(tx.Category) + tx.Amount
-	if total > b.Limit {
-		return fmt.Errorf("%w по категории «%s»: %.2f из %.2f", ErrBudgetExceeded, tx.Category, total, b.Limit)
+	spent, err := CategoryTotal(tx.Category)
+	if err != nil {
+		return err
+	}
+
+	total := spent + tx.Amount
+	if total > limit {
+		return fmt.Errorf("%w по категории «%s»: %.2f из %.2f", ErrBudgetExceeded, tx.Category, total, limit)
 	}
 	return nil
 }

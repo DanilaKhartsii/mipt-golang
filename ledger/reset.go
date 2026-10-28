@@ -1,10 +1,11 @@
 package ledger
 
-// Reset очищает хранилище транзакций и бюджетов. Нужна тестам, чтобы сценарии не влияли друг на друга.
-func Reset() {
-	mu.Lock()
-	defer mu.Unlock()
+import "fmt"
 
-	transactions = []Transaction{}
-	budgets = map[string]Budget{}
+// Reset очищает таблицы транзакций и бюджетов и сбрасывает счётчики ID. Нужна тестам, чтобы сценарии не влияли друг на друга.
+func Reset() error {
+	if _, err := sqlDB.Exec(`TRUNCATE expenses, budgets RESTART IDENTITY`); err != nil {
+		return fmt.Errorf("не удалось очистить таблицы: %w", err)
+	}
+	return nil
 }
