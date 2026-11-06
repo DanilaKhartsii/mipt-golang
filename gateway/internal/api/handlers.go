@@ -9,7 +9,9 @@ import (
 	"ledger"
 )
 
-func createTransaction(w http.ResponseWriter, r *http.Request) {
+type handlers struct{ service ledger.Service }
+
+func (h handlers) createTransaction(w http.ResponseWriter, r *http.Request) {
 	var req CreateTransactionRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -21,13 +23,11 @@ func createTransaction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := tx.Validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	created, err := ledger.AddTransaction(tx)
+	created, err := h.service.AddTransaction(r.Context(), tx)
+	var validationErr ledger.ValidationError
 	switch {
+	case errors.As(err, &validationErr):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ledger.ErrBudgetExceeded):
 		writeError(w, http.StatusConflict, "budget exceeded")
 	case err != nil:
@@ -38,8 +38,8 @@ func createTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func listTransactions(w http.ResponseWriter, _ *http.Request) {
-	transactions, err := ledger.ListTransactions()
+func (h handlers) listTransactions(w http.ResponseWriter, r *http.Request) {
+	transactions, err := h.service.ListTransactions(r.Context())
 	if err != nil {
 		log.Printf("не удалось получить транзакции: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
@@ -48,7 +48,7 @@ func listTransactions(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, newTransactionResponses(transactions))
 }
 
-func createBudget(w http.ResponseWriter, r *http.Request) {
+func (h handlers) createBudget(w http.ResponseWriter, r *http.Request) {
 	var req CreateBudgetRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -56,12 +56,12 @@ func createBudget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b := req.toBudget()
-	if err := b.Validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err := ledger.SetBudget(b); err != nil {
+	if err := h.service.SetBudget(r.Context(), b); err != nil {
+		var validationErr ledger.ValidationError
+		if errors.As(err, &validationErr) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		log.Printf("не удалось сохранить бюджет: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -69,8 +69,8 @@ func createBudget(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, newBudgetResponse(b))
 }
 
-func listBudgets(w http.ResponseWriter, _ *http.Request) {
-	budgets, err := ledger.ListBudgets()
+func (h handlers) listBudgets(w http.ResponseWriter, r *http.Request) {
+	budgets, err := h.service.ListBudgets(r.Context())
 	if err != nil {
 		log.Printf("не удалось получить бюджеты: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
@@ -79,14 +79,14 @@ func listBudgets(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, newBudgetResponses(budgets))
 }
 
-func reportSummary(w http.ResponseWriter, r *http.Request) {
+func (h handlers) reportSummary(w http.ResponseWriter, r *http.Request) {
 	from, to, err := parseReportPeriod(r.URL.Query())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	report, err := ledger.GetReportSummary(r.Context(), from, to)
+	report, err := h.service.GetReportSummary(r.Context(), from, to)
 	if err != nil {
 		log.Printf("не удалось построить отчёт: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")

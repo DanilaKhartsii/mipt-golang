@@ -1,18 +1,23 @@
 package api
 
-import "net/http"
+import (
+	"net/http"
+
+	"ledger"
+)
 
 const apiPrefix = "/api"
 
-func NewRouter() http.Handler {
+func NewRouter(svc ledger.Service) http.Handler {
+	h := handlers{service: svc}
 	api := http.NewServeMux()
-	api.HandleFunc("POST /transactions", createTransaction)
-	api.HandleFunc("GET /transactions", listTransactions)
+	api.HandleFunc("POST /transactions", h.createTransaction)
+	api.HandleFunc("GET /transactions", h.listTransactions)
 	api.HandleFunc("/transactions", methodNotAllowed(http.MethodGet, http.MethodPost))
-	api.HandleFunc("POST /budgets", createBudget)
-	api.HandleFunc("GET /budgets", listBudgets)
+	api.HandleFunc("POST /budgets", h.createBudget)
+	api.HandleFunc("GET /budgets", h.listBudgets)
 	api.HandleFunc("/budgets", methodNotAllowed(http.MethodGet, http.MethodPost))
-	api.HandleFunc("GET /reports/summary", reportSummary)
+	api.HandleFunc("GET /reports/summary", h.reportSummary)
 	api.HandleFunc("/reports/summary", methodNotAllowed(http.MethodGet))
 	api.HandleFunc("/", notFound)
 

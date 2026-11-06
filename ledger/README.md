@@ -2,14 +2,19 @@
 
 Пакет с бизнес-логикой учёта расходов: транзакции, бюджеты категорий и отчёт по расходам.
 Ledger хранит данные в PostgreSQL, а результаты отчёта и список бюджетов кеширует в Redis на короткий TTL.
-Gateway подключает ledger как Go-пакет и вызывает `ledger.Init()` при старте, поэтому отдельный процесс для Ledger не нужен.
+Gateway подключает Ledger как Go-пакет и вызывает `ledger.NewService(ctx)` при старте.
+Фабрика возвращает интерфейс сервиса и функцию закрытия соединений; отдельный процесс Ledger не нужен.
 
 ## Структура
 
-- `budget.go`, `transaction.go`, `report.go` — бизнес-правила и SQL-запросы;
-- `storage.go` — `Init()` и общие подключения к PostgreSQL и Redis;
+- `internal/domain` — сущности, валидация и минимальные контракты репозиториев;
+- `internal/repository/pg` — SQL-реализации контрактов для PostgreSQL;
+- `internal/service` — правила бюджета, операции приложения и кеширование;
+- `internal/app` — фабрика сервиса: конфигурация, подключения, сборка зависимостей и закрытие ресурсов;
+- `ledger.go` — публичные типы, интерфейс и фабрика для Gateway;
 - `internal/db` — DSN из переменных окружения, `sql.Open("pgx", dsn)`, пул соединений и `Ping()`;
 - `internal/cache` — клиент `github.com/redis/go-redis/v9`, значения хранятся в JSON;
+- `testkit` — отдельная тестовая БД без Redis;
 - `migrations` — миграции Goose для таблиц `budgets` и `expenses`;
 - `cmd/ledger` — консольная демонстрация, работает с той же БД.
 
@@ -42,7 +47,8 @@ goose -dir ./ledger/migrations postgres "$DATABASE_URL" down    # откатит
 goose -dir ./ledger/migrations postgres "$DATABASE_URL" status  # посмотреть состояние
 ```
 
-Порядок запуска: PostgreSQL и Redis → `goose ... up` → Gateway (он инициализирует Ledger).
+Порядок запуска: PostgreSQL и Redis → `goose ... up` → Gateway (он получает готовый сервис от фабрики Ledger).
+Фабрика не запускает миграции и проверяет PostgreSQL через `PingContext(ctx)`.
 
 ## Переменные окружения
 
@@ -83,7 +89,8 @@ go run ./cmd/ledger
 - `SetBudget` выполняет UPSERT по `category` и удаляет кеш `budgets:all`.
 - `AddTransaction` берёт лимит категории и уже потраченную сумму. Если `spent + amount > limit_amount`,
   возвращается `ErrBudgetExceeded` и запись не вставляется. Категория без бюджета не ограничена.
-  ID новой транзакции берётся из `RETURNING id`.
+  Проверка и вставка выполняются в одной транзакции PostgreSQL под блокировкой категории;
+  изменение бюджета использует ту же блокировку. ID новой транзакции берётся из `RETURNING id`.
 - `ListTransactions` сортирует по `date DESC, id DESC`, `ListBudgets` — по `category`.
 
 ## Кеш Redis
