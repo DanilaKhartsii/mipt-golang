@@ -2,8 +2,9 @@
 
 HTTP-шлюз на порту `8080`. Эндпоинты и формат ответов остались прежними, но теперь Ledger хранит данные в PostgreSQL,
 поэтому они переживают перезапуск. Отчёт по расходам кешируется в Redis на 30 секунд.
-Gateway импортирует пакет `ledger` и при старте вызывает `ledger.Init()`: подключается к PostgreSQL и Redis
-по переменным окружения из [ledger/README.md](../ledger/README.md).
+Gateway импортирует только публичный пакет `ledger`: при старте получает `ledger.Service` и `closeFn`
+из `ledger.NewService(ctx)`, передаёт сервис в `api.NewRouter(svc)` и откладывает вызов `closeFn()`.
+Подключения к PostgreSQL и Redis собирает фабрика Ledger по переменным окружения из [ledger/README.md](../ledger/README.md).
 
 ## Запуск
 

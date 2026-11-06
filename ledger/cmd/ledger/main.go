@@ -3,11 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"ledger"
@@ -18,10 +18,11 @@ const budgetsFile = "budgets.json"
 func main() {
 	fmt.Println("Ledger service started")
 
-	if err := ledger.Init(context.Background()); err != nil {
+	svc, closeFn, err := ledger.NewService(context.Background())
+	if err != nil {
 		log.Fatalf("Ledger: %v", err)
 	}
-	defer ledger.Close()
+	defer closeFn()
 
 	fmt.Println("Проверка CheckValid для разных типов:")
 	checkValid("Транзакция «Кофе»", ledger.Transaction{Amount: 250, Category: "Еда", Description: "Кофе", Date: time.Now()})
@@ -29,19 +30,19 @@ func main() {
 	checkValid("Бюджет «Спорт»", ledger.Budget{Category: "Спорт", Limit: 2000})
 	checkValid("Бюджет с отрицательным лимитом", ledger.Budget{Category: "Спорт", Limit: -100})
 
-	if err := ledger.SetBudget(ledger.Budget{Category: "Еда", Limit: 5000}); err != nil {
+	if err := svc.SetBudget(context.Background(), ledger.Budget{Category: "Еда", Limit: 5000}); err != nil {
 		fmt.Printf("Ошибка установки бюджета: %v\n", err)
 	}
-	if err := ledger.SetBudget(ledger.Budget{Category: "", Limit: 1000}); err != nil {
+	if err := svc.SetBudget(context.Background(), ledger.Budget{Category: "", Limit: 1000}); err != nil {
 		fmt.Printf("Ожидаемая ошибка установки бюджета: %v\n", err)
 	}
-	if err := loadBudgetsFromFile(budgetsFile); err != nil {
+	if err := loadBudgetsFromFile(svc, budgetsFile); err != nil {
 		fmt.Printf("Ошибка загрузки бюджетов: %v\n", err)
 	}
-	if err := ledger.LoadBudgets(strings.NewReader(`[{"category": "Еда", "limit": "много"}]`)); err != nil {
+	if err := json.Unmarshal([]byte(`[{"category": "Еда", "limit": "много"}]`), new([]ledger.Budget)); err != nil {
 		fmt.Printf("Ожидаемая ошибка загрузки некорректного JSON: %v\n", err)
 	}
-	printBudgets()
+	printBudgets(svc)
 
 	testTransactions := []ledger.Transaction{
 		{Amount: 350.50, Category: "Еда", Description: "Обед в кафе", Date: time.Now()},
@@ -55,39 +56,48 @@ func main() {
 		{Amount: 10000, Category: "Подарки", Description: "Подарок без бюджета", Date: time.Now()},
 	}
 	for _, tx := range testTransactions {
-		addTransaction(tx)
+		addTransaction(svc, tx)
 	}
-	printBudgets()
-	printTransactions()
+	printBudgets(svc)
+	printTransactions(svc)
 
 	fmt.Println("Увеличиваем бюджет «Еда» до 6000 и повторяем отклонённую транзакцию")
-	if err := ledger.SetBudget(ledger.Budget{Category: "Еда", Limit: 6000}); err != nil {
+	if err := svc.SetBudget(context.Background(), ledger.Budget{Category: "Еда", Limit: 6000}); err != nil {
 		fmt.Printf("Ошибка установки бюджета: %v\n", err)
 	}
-	addTransaction(testTransactions[2])
-	printBudgets()
+	addTransaction(svc, testTransactions[2])
+	printBudgets(svc)
 }
 
-func loadBudgetsFromFile(path string) error {
+func loadBudgetsFromFile(svc ledger.Service, path string) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("не удалось открыть файл %s: %w", path, err)
 	}
 	defer file.Close()
 
-	return ledger.LoadBudgets(bufio.NewReader(file))
+	var budgets []ledger.Budget
+	if err := json.NewDecoder(bufio.NewReader(file)).Decode(&budgets); err != nil {
+		return fmt.Errorf("не удалось разобрать JSON с бюджетами: %w", err)
+	}
+	for i, b := range budgets {
+		if err := svc.SetBudget(context.Background(), b); err != nil {
+			return fmt.Errorf("некорректный бюджет #%d: %w", i+1, err)
+		}
+	}
+	return nil
 }
 
-func checkValid(name string, v ledger.Validatable) {
-	if err := ledger.CheckValid(v); err != nil {
+func checkValid(name string, v interface{ Validate() error }) {
+	if err := v.Validate(); err != nil {
 		fmt.Printf("  %s: некорректно — %v\n", name, err)
 		return
 	}
 	fmt.Printf("  %s: корректно\n", name)
 }
 
-func addTransaction(tx ledger.Transaction) {
-	_, err := ledger.AddTransaction(tx)
+func addTransaction(svc ledger.Service, tx ledger.Transaction) {
+	_, err := svc.AddTransaction(context.Background(), tx)
 	switch {
 	case errors.Is(err, ledger.ErrBudgetExceeded):
 		fmt.Printf("Отказ «%s»: %v\n", tx.Description, err)
@@ -98,8 +108,8 @@ func addTransaction(tx ledger.Transaction) {
 	}
 }
 
-func printBudgets() {
-	budgets, err := ledger.ListBudgets()
+func printBudgets(svc ledger.Service) {
+	budgets, err := svc.ListBudgets(context.Background())
 	if err != nil {
 		fmt.Printf("Ошибка получения бюджетов: %v\n", err)
 		return
@@ -107,7 +117,7 @@ func printBudgets() {
 
 	fmt.Printf("Бюджеты (%d):\n", len(budgets))
 	for _, b := range budgets {
-		total, err := ledger.CategoryTotal(b.Category)
+		total, err := svc.CategoryTotal(context.Background(), b.Category)
 		if err != nil {
 			fmt.Printf("  %-12s | ошибка: %v\n", b.Category, err)
 			continue
@@ -116,8 +126,8 @@ func printBudgets() {
 	}
 }
 
-func printTransactions() {
-	transactions, err := ledger.ListTransactions()
+func printTransactions(svc ledger.Service) {
+	transactions, err := svc.ListTransactions(context.Background())
 	if err != nil {
 		fmt.Printf("Ошибка получения транзакций: %v\n", err)
 		return

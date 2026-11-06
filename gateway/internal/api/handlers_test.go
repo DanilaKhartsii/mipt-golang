@@ -10,22 +10,32 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"ledger"
+	"ledger/testkit"
 )
 
 const jsonContentType = "application/json; charset=utf-8"
+
+var fixture *testkit.Fixture
 
 // Тесты работают с общей тестовой БД ledger, поэтому не параллельные и сбрасывают состояние в каждом подтесте.
 // Без TEST_DATABASE_URL тесты, которым нужна БД, пропускаются; проверки ответов 400 работают и без неё.
 
 func TestMain(m *testing.M) {
 	if dsn := os.Getenv("TEST_DATABASE_URL"); dsn != "" {
-		if err := ledger.InitDB(context.Background(), dsn); err != nil {
+		var err error
+		fixture, err = testkit.Open(context.Background(), dsn)
+		if err != nil {
 			log.Fatalf("не удалось подключиться к тестовой БД: %v", err)
 		}
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if fixture != nil {
+		fixture.Close()
+	}
+	os.Exit(code)
 }
 
 func TestBudgetsAPI(t *testing.T) {
@@ -120,12 +130,12 @@ func TestTransactionsAPI(t *testing.T) {
 		if got := decodeResponse[errorResponse](t, rec); got != want {
 			t.Errorf("body = %+v, want %+v", got, want)
 		}
-		transactions, err := ledger.ListTransactions()
+		transactions, err := fixture.Service.ListTransactions(context.Background())
 		if err != nil {
-			t.Fatalf("ledger.ListTransactions() error = %v, want nil", err)
+			t.Fatalf("Service.ListTransactions() error = %v, want nil", err)
 		}
 		if got := len(transactions); got != 1 {
-			t.Errorf("len(ledger.ListTransactions()) = %d, want 1", got)
+			t.Errorf("len(Service.ListTransactions()) = %d, want 1", got)
 		}
 	})
 
@@ -206,7 +216,7 @@ func resetLedger(t *testing.T) {
 func mustResetLedger(t *testing.T) {
 	t.Helper()
 
-	if err := ledger.Reset(); err != nil {
+	if err := fixture.Reset(context.Background()); err != nil {
 		t.Fatalf("ledger.Reset() error = %v, want nil", err)
 	}
 }
@@ -222,8 +232,40 @@ func doRequest(t *testing.T, method, path, body string) *httptest.ResponseRecord
 
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	NewRouter().ServeHTTP(rec, req)
+	var svc ledger.Service
+	if fixture != nil {
+		svc = fixture.Service
+	} else {
+		svc = validationService{}
+	}
+	NewRouter(svc).ServeHTTP(rec, req)
 	return rec
+}
+
+// Без тестовой БД ошибки валидации по-прежнему проверяются через HTTP-слой.
+type validationService struct{}
+
+func (validationService) SetBudget(_ context.Context, b ledger.Budget) error {
+	if err := b.Validate(); err != nil {
+		return ledger.ValidationError{Err: err}
+	}
+	return nil
+}
+
+func (validationService) AddTransaction(_ context.Context, tx ledger.Transaction) (ledger.Transaction, error) {
+	if err := tx.Validate(); err != nil {
+		return ledger.Transaction{}, ledger.ValidationError{Err: err}
+	}
+	return tx, nil
+}
+
+func (validationService) ListBudgets(context.Context) ([]ledger.Budget, error) { return nil, nil }
+func (validationService) ListTransactions(context.Context) ([]ledger.Transaction, error) {
+	return nil, nil
+}
+func (validationService) CategoryTotal(context.Context, string) (float64, error) { return 0, nil }
+func (validationService) GetReportSummary(context.Context, time.Time, time.Time) (ledger.ReportSummary, error) {
+	return ledger.ReportSummary{}, nil
 }
 
 func checkResponse(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int) {

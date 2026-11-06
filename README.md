@@ -90,11 +90,11 @@ go run ./cmd/ledger
 
 - `ledger/ledger_test.go` — unit-тесты домена: табличные проверки `Transaction.Validate()` и `Budget.Validate()`,
   сценарии добавления транзакций с бюджетом категории (в пределах лимита, ровно лимит, превышение, другая категория).
-- `gateway/internal/api/handlers_test.go` — интеграционные тесты HTTP-слоя через `NewRouter()`:
+- `gateway/internal/api/handlers_test.go` — интеграционные тесты HTTP-слоя через `NewRouter(svc)`:
   `POST/GET /api/budgets`, `POST/GET /api/transactions`, маппинг ошибок `400` и `409`, заголовок `Content-Type`.
 
-Хранилище ledger общее для всех тестов, поэтому тесты, которые его меняют, вызывают `ledger.Reset()`
-в начале каждого подтеста и в `t.Cleanup()`.
+Тесты с БД используют `ledger/testkit`: каждый сценарий очищает отдельную тестовую БД
+в начале и в `t.Cleanup()`.
 
 ### Запуск тестов
 
@@ -112,27 +112,28 @@ go tool cover -html=cover.out -o cover.html
 
 Подробный отчёт по подтестам — с флагом `-v`.
 
-### Покрытие
-
-| Пакет                  | Покрытие |
-|------------------------|----------|
-| `ledger`               | 71.2%    |
-| `gateway/internal/api` | 88.4%    |
-
-Пакеты `main` (`ledger/cmd/ledger`, `gateway`) тестами не покрыты.
+Покрытие зависит от доступности тестовой БД: без `TEST_DATABASE_URL` интеграционные сценарии пропускаются.
 
 ## hw-7
 
 Ledger хранит данные в PostgreSQL вместо памяти, а отчёты кеширует в Redis на короткий TTL.
 Gateway обращается к тем же HTTP-эндпоинтам с прежними контрактами. Добавлен только `GET /api/reports/summary`
-для проверки кеша, а при старте вызывается `ledger.Init()` для подключения к PostgreSQL и Redis.
+для проверки кеша, а при старте фабрика Ledger подключает PostgreSQL и Redis.
 
 - `ledger/migrations` — миграции Goose для таблиц `budgets` и `expenses`;
 - `ledger/internal/db`, `ledger/internal/cache` — подключение к PostgreSQL (`pgx`) и Redis (`go-redis/v9`);
-- `SetBudget`, `ListBudgets`, `AddTransaction`, `ListTransactions` работают через SQL,
+- операции сервиса работают через доменные интерфейсы и SQL-репозитории,
   `GetReportSummary` кеширует результат в `report:summary:<from>:<to>` на 30 секунд.
 
 Порядок запуска: PostgreSQL и Redis → `goose -dir ./ledger/migrations postgres "$DATABASE_URL" up` → Gateway.
 Подробности, переменные окружения и примеры cURL — в [ledger/README.md](ledger/README.md) и [gateway/README.md](gateway/README.md).
 
 Тестам хранилища нужна отдельная БД в `TEST_DATABASE_URL`; без неё они пропускаются.
+
+## hw-8
+
+Ledger разделён на `internal/domain` (сущности и контракты), `internal/repository/pg` (SQL),
+`internal/service` (правила и интерфейс приложения) и `internal/app` (сборка зависимостей).
+Gateway получает готовый `ledger.Service` через `ledger.NewService(ctx)`, передаёт его HTTP-обработчикам
+и закрывает подключения через возвращённую фабрикой функцию. Миграции выполняются отдельно.
+Проверка лимита и вставка расхода выполняются атомарно с блокировкой категории в PostgreSQL.

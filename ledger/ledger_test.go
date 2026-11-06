@@ -3,23 +3,33 @@ package ledger
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"slices"
 	"testing"
 	"time"
+
+	"ledger/testkit"
 )
 
 var testDate = time.Date(2026, time.October, 26, 0, 0, 0, 0, time.UTC)
+var fixture *testkit.Fixture
 
 // TestMain подключает тестовую БД из TEST_DATABASE_URL. Без неё тесты хранилища пропускаются.
 func TestMain(m *testing.M) {
 	if dsn := os.Getenv("TEST_DATABASE_URL"); dsn != "" {
-		if err := InitDB(context.Background(), dsn); err != nil {
+		var err error
+		fixture, err = testkit.Open(context.Background(), dsn)
+		if err != nil {
 			log.Fatalf("не удалось подключиться к тестовой БД: %v", err)
 		}
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if fixture != nil {
+		fixture.Close()
+	}
+	os.Exit(code)
 }
 
 func TestTransactionValidate(t *testing.T) {
@@ -174,6 +184,45 @@ func TestAddTransactionBudget(t *testing.T) {
 	})
 }
 
+func TestConcurrentTransactionsRespectBudget(t *testing.T) {
+	resetDB(t)
+	if err := SetBudget(Budget{Category: "еда", Limit: 100}); err != nil {
+		t.Fatal(err)
+	}
+
+	const workers = 20
+	start := make(chan struct{})
+	results := make(chan error, workers)
+	for range workers {
+		go func() {
+			<-start
+			_, err := AddTransaction(Transaction{Amount: 100, Category: "еда", Date: testDate})
+			results <- err
+		}()
+	}
+	close(start)
+
+	successes := 0
+	conflicts := 0
+	for range workers {
+		err := <-results
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrBudgetExceeded):
+			conflicts++
+		default:
+			t.Fatalf("AddTransaction() unexpected error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != workers-1 {
+		t.Errorf("successes = %d, conflicts = %d; want 1, %d", successes, conflicts, workers-1)
+	}
+	if got := len(mustListTransactions(t)); got != 1 {
+		t.Errorf("len(ListTransactions()) = %d, want 1", got)
+	}
+}
+
 func TestGetReportSummary(t *testing.T) {
 	resetDB(t)
 
@@ -219,7 +268,7 @@ func setupFoodBudget(t *testing.T) {
 func resetDB(t *testing.T) {
 	t.Helper()
 
-	if sqlDB == nil {
+	if fixture == nil {
 		t.Skip("TEST_DATABASE_URL не задана, тест с БД пропущен")
 	}
 
@@ -230,7 +279,7 @@ func resetDB(t *testing.T) {
 func mustReset(t *testing.T) {
 	t.Helper()
 
-	if err := Reset(); err != nil {
+	if err := fixture.Reset(context.Background()); err != nil {
 		t.Fatalf("Reset() error = %v, want nil", err)
 	}
 }
@@ -243,4 +292,27 @@ func mustListTransactions(t *testing.T) []Transaction {
 		t.Fatalf("ListTransactions() error = %v, want nil", err)
 	}
 	return transactions
+}
+
+func SetBudget(b Budget) error {
+	return fixture.Service.SetBudget(context.Background(), b)
+}
+
+func ListBudgets() ([]Budget, error) {
+	return fixture.Service.ListBudgets(context.Background())
+}
+
+func AddTransaction(tx Transaction) (Transaction, error) {
+	return fixture.Service.AddTransaction(context.Background(), tx)
+}
+
+func ListTransactions() ([]Transaction, error) {
+	return fixture.Service.ListTransactions(context.Background())
+}
+
+func GetReportSummary(ctx context.Context, from, to time.Time) (ReportSummary, error) {
+	if fixture == nil {
+		return ReportSummary{}, fmt.Errorf("тестовая БД не подключена")
+	}
+	return fixture.Service.GetReportSummary(ctx, from, to)
 }
