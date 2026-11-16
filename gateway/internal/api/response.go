@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -29,4 +31,16 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, errorResponse{Error: message})
+}
+
+func writeRequestTimeout(w http.ResponseWriter) {
+	writeError(w, http.StatusGatewayTimeout, "request timed out or canceled")
+}
+
+func writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		writeRequestTimeout(w)
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "internal server error")
 }

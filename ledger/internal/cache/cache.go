@@ -45,9 +45,10 @@ func ConfigFromEnv() (Config, error) {
 
 func Open(ctx context.Context, cfg Config) (*Cache, error) {
 	client := redis.NewClient(&redis.Options{
-		Addr:     cfg.Addr,
-		Password: cfg.Password,
-		DB:       cfg.DB,
+		Addr:                  cfg.Addr,
+		Password:              cfg.Password,
+		DB:                    cfg.DB,
+		ContextTimeoutEnabled: true,
 	})
 
 	ctx, cancel := context.WithTimeout(ctx, pingTimeout)

@@ -2,13 +2,14 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"ledger"
 )
 
 const apiPrefix = "/api"
 
-func NewRouter(svc ledger.Service) http.Handler {
+func NewRouter(svc ledger.Service, timeout time.Duration) http.Handler {
 	h := handlers{service: svc}
 	api := http.NewServeMux()
 	api.HandleFunc("POST /transactions", h.createTransaction)
@@ -26,5 +27,5 @@ func NewRouter(svc ledger.Service) http.Handler {
 	mux.HandleFunc("GET /ping", ping)
 	mux.HandleFunc("/", notFound)
 
-	return withLogging(withJSONContentType(mux))
+	return withLogging(withJSONContentType(withTimeout(mux, timeout)))
 }
