@@ -66,7 +66,8 @@ type ExpenseRepository interface {
 	Insert(context.Context, Transaction) (Transaction, error)
 	List(context.Context) ([]Transaction, error)
 	SumByCategory(context.Context, string) (float64, error)
-	SummaryByPeriod(context.Context, time.Time, time.Time) ([]CategorySummary, error)
+	CategoriesByPeriod(context.Context, time.Time, time.Time) ([]string, error)
+	SumByCategoryAndPeriod(context.Context, string, time.Time, time.Time) (float64, error)
 }
 
 // CategoryUnitOfWork выполняет операции с одной категорией в общей транзакции.

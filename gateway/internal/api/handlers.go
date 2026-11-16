@@ -32,7 +32,7 @@ func (h handlers) createTransaction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "budget exceeded")
 	case err != nil:
 		log.Printf("не удалось добавить транзакцию: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		writeServiceError(w, r, err)
 	default:
 		writeJSON(w, http.StatusCreated, newTransactionResponse(created))
 	}
@@ -42,7 +42,7 @@ func (h handlers) listTransactions(w http.ResponseWriter, r *http.Request) {
 	transactions, err := h.service.ListTransactions(r.Context())
 	if err != nil {
 		log.Printf("не удалось получить транзакции: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		writeServiceError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, newTransactionResponses(transactions))
@@ -63,7 +63,7 @@ func (h handlers) createBudget(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("не удалось сохранить бюджет: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		writeServiceError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, newBudgetResponse(b))
@@ -73,7 +73,7 @@ func (h handlers) listBudgets(w http.ResponseWriter, r *http.Request) {
 	budgets, err := h.service.ListBudgets(r.Context())
 	if err != nil {
 		log.Printf("не удалось получить бюджеты: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		writeServiceError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, newBudgetResponses(budgets))
@@ -89,7 +89,7 @@ func (h handlers) reportSummary(w http.ResponseWriter, r *http.Request) {
 	report, err := h.service.GetReportSummary(r.Context(), from, to)
 	if err != nil {
 		log.Printf("не удалось построить отчёт: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		writeServiceError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, newReportSummaryResponse(report))

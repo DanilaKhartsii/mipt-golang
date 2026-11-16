@@ -238,7 +238,7 @@ func doRequest(t *testing.T, method, path, body string) *httptest.ResponseRecord
 	} else {
 		svc = validationService{}
 	}
-	NewRouter(svc).ServeHTTP(rec, req)
+	NewRouter(svc, DefaultRequestTimeout).ServeHTTP(rec, req)
 	return rec
 }
 

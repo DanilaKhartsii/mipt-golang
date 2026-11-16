@@ -43,8 +43,11 @@ func (r *expenseRepository) List(context.Context) ([]domain.Transaction, error) 
 func (r *expenseRepository) SumByCategory(context.Context, string) (float64, error) {
 	return r.spent, nil
 }
-func (r *expenseRepository) SummaryByPeriod(context.Context, time.Time, time.Time) ([]domain.CategorySummary, error) {
-	return []domain.CategorySummary{}, nil
+func (r *expenseRepository) CategoriesByPeriod(context.Context, time.Time, time.Time) ([]string, error) {
+	return []string{}, nil
+}
+func (r *expenseRepository) SumByCategoryAndPeriod(context.Context, string, time.Time, time.Time) (float64, error) {
+	return r.spent, nil
 }
 
 type categoryUnitOfWork struct {

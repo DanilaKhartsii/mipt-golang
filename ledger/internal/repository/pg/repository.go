@@ -112,9 +112,9 @@ func (r *Expenses) SumByCategory(ctx context.Context, category string) (float64,
 	return total, nil
 }
 
-func (r *Expenses) SummaryByPeriod(ctx context.Context, from, to time.Time) ([]domain.CategorySummary, error) {
+func (r *Expenses) CategoriesByPeriod(ctx context.Context, from, to time.Time) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT category, SUM(amount) FROM expenses WHERE date BETWEEN $1 AND $2 GROUP BY category ORDER BY category`,
+		`SELECT DISTINCT category FROM expenses WHERE date BETWEEN $1 AND $2 ORDER BY category`,
 		from, to,
 	)
 	if err != nil {
@@ -122,16 +122,28 @@ func (r *Expenses) SummaryByPeriod(ctx context.Context, from, to time.Time) ([]d
 	}
 	defer rows.Close()
 
-	result := []domain.CategorySummary{}
+	result := []string{}
 	for rows.Next() {
-		var s domain.CategorySummary
-		if err := rows.Scan(&s.Category, &s.Total); err != nil {
+		var category string
+		if err := rows.Scan(&category); err != nil {
 			return nil, fmt.Errorf("не удалось прочитать строку отчёта: %w", err)
 		}
-		result = append(result, s)
+		result = append(result, category)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("не удалось построить отчёт: %w", err)
 	}
 	return result, nil
+}
+
+func (r *Expenses) SumByCategoryAndPeriod(ctx context.Context, category string, from, to time.Time) (float64, error) {
+	var total float64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE category = $1 AND date BETWEEN $2 AND $3`,
+		category, from, to,
+	).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("не удалось посчитать расходы по категории «%s» за период: %w", category, err)
+	}
+	return total, nil
 }
