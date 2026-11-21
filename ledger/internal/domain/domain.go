@@ -54,6 +54,17 @@ type ReportSummary struct {
 	Total      float64           `json:"total"`
 }
 
+type ImportError struct {
+	Index int
+	Error string
+}
+
+type ImportSummary struct {
+	Accepted int64
+	Rejected int64
+	Errors   []ImportError
+}
+
 var ErrBudgetExceeded = errors.New("превышен бюджет")
 
 type BudgetRepository interface {

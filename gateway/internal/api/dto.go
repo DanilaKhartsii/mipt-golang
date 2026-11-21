@@ -1,9 +1,12 @@
 package api
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
+	"strconv"
 	"time"
 
 	"ledger"
@@ -22,6 +25,17 @@ type TransactionResponse struct {
 	Category    string  `json:"category"`
 	Description string  `json:"description"`
 	Date        string  `json:"date"`
+}
+
+type ImportErrorResponse struct {
+	Index int    `json:"index"`
+	Error string `json:"error"`
+}
+
+type ImportSummaryResponse struct {
+	Accepted int64                 `json:"accepted"`
+	Rejected int64                 `json:"rejected"`
+	Errors   []ImportErrorResponse `json:"errors"`
 }
 
 type CreateBudgetRequest struct {
@@ -79,6 +93,31 @@ func newTransactionResponses(transactions []ledger.Transaction) []TransactionRes
 	for _, tx := range transactions {
 		result = append(result, newTransactionResponse(tx))
 	}
+	return result
+}
+
+func parseImportWorkers(query url.Values) (int, error) {
+	if !query.Has("workers") {
+		return ledger.DefaultImportWorkers, nil
+	}
+	workers, err := strconv.Atoi(query.Get("workers"))
+	if err != nil || workers < 1 || workers > ledger.MaxImportWorkers {
+		return 0, fmt.Errorf("параметр workers должен быть целым числом от 1 до %d", ledger.MaxImportWorkers)
+	}
+	return workers, nil
+}
+
+func newImportSummaryResponse(summary ledger.ImportSummary, indices []int, conversionErrors []ImportErrorResponse) ImportSummaryResponse {
+	result := ImportSummaryResponse{
+		Accepted: summary.Accepted,
+		Rejected: summary.Rejected + int64(len(conversionErrors)),
+		Errors:   make([]ImportErrorResponse, 0, len(summary.Errors)+len(conversionErrors)),
+	}
+	result.Errors = append(result.Errors, conversionErrors...)
+	for _, item := range summary.Errors {
+		result.Errors = append(result.Errors, ImportErrorResponse{Index: indices[item.Index], Error: item.Error})
+	}
+	slices.SortFunc(result.Errors, func(a, b ImportErrorResponse) int { return cmp.Compare(a.Index, b.Index) })
 	return result
 }
 

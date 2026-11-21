@@ -21,6 +21,7 @@ type Service interface {
 	SetBudget(context.Context, domain.Budget) error
 	ListBudgets(context.Context) ([]domain.Budget, error)
 	AddTransaction(context.Context, domain.Transaction) (domain.Transaction, error)
+	ImportTransactions(context.Context, []domain.Transaction, int) (domain.ImportSummary, error)
 	ListTransactions(context.Context) ([]domain.Transaction, error)
 	CategoryTotal(context.Context, string) (float64, error)
 	GetReportSummary(context.Context, time.Time, time.Time) (domain.ReportSummary, error)

@@ -48,6 +48,47 @@ func (h handlers) listTransactions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, newTransactionResponses(transactions))
 }
 
+func (h handlers) importTransactions(w http.ResponseWriter, r *http.Request) {
+	workers, err := parseImportWorkers(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var req []CreateTransactionRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req == nil {
+		writeError(w, http.StatusBadRequest, "тело запроса должно быть JSON-массивом транзакций")
+		return
+	}
+
+	transactions := make([]ledger.Transaction, 0, len(req))
+	indices := make([]int, 0, len(req))
+	var conversionErrors []ImportErrorResponse
+	for i, item := range req {
+		if r.Context().Err() != nil {
+			writeRequestTimeout(w)
+			return
+		}
+		tx, err := item.toTransaction()
+		if err != nil {
+			conversionErrors = append(conversionErrors, ImportErrorResponse{Index: i, Error: err.Error()})
+			continue
+		}
+		transactions = append(transactions, tx)
+		indices = append(indices, i)
+	}
+	summary, err := h.service.ImportTransactions(r.Context(), transactions, workers)
+	if err != nil {
+		log.Printf("не удалось завершить импорт транзакций (принято %d, отклонено %d): %v", summary.Accepted, summary.Rejected, err)
+		writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, newImportSummaryResponse(summary, indices, conversionErrors))
+}
+
 func (h handlers) createBudget(w http.ResponseWriter, r *http.Request) {
 	var req CreateBudgetRequest
 	if err := decodeJSON(r, &req); err != nil {
