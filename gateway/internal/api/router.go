@@ -15,6 +15,8 @@ func NewRouter(svc ledger.Service, timeout time.Duration) http.Handler {
 	api.HandleFunc("POST /transactions", h.createTransaction)
 	api.HandleFunc("GET /transactions", h.listTransactions)
 	api.HandleFunc("/transactions", methodNotAllowed(http.MethodGet, http.MethodPost))
+	api.HandleFunc("POST /transactions/bulk", h.importTransactions)
+	api.HandleFunc("/transactions/bulk", methodNotAllowed(http.MethodPost))
 	api.HandleFunc("POST /budgets", h.createBudget)
 	api.HandleFunc("GET /budgets", h.listBudgets)
 	api.HandleFunc("/budgets", methodNotAllowed(http.MethodGet, http.MethodPost))

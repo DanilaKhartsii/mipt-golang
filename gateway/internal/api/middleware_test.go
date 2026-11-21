@@ -85,6 +85,10 @@ func (s waitingService) AddTransaction(ctx context.Context, _ ledger.Transaction
 	return ledger.Transaction{}, s.wait(ctx)
 }
 
+func (s waitingService) ImportTransactions(ctx context.Context, _ []ledger.Transaction, _ int) (ledger.ImportSummary, error) {
+	return ledger.ImportSummary{}, s.wait(ctx)
+}
+
 func (s waitingService) ListBudgets(ctx context.Context) ([]ledger.Budget, error) {
 	return nil, s.wait(ctx)
 }
@@ -105,6 +109,7 @@ func TestTimeoutAppliesToEveryAPIRoute(t *testing.T) {
 	}{
 		{method: http.MethodGet, path: "/api/transactions"},
 		{method: http.MethodPost, path: "/api/transactions", body: `{"amount":1,"category":"еда","date":"2026-10-01"}`},
+		{method: http.MethodPost, path: "/api/transactions/bulk", body: `[{"amount":1,"category":"еда","date":"2026-10-01"}]`},
 		{method: http.MethodGet, path: "/api/budgets"},
 		{method: http.MethodPost, path: "/api/budgets", body: `{"category":"еда","limit":100}`},
 		{method: http.MethodGet, path: "/api/reports/summary?from=2026-10-01&to=2026-10-31"},

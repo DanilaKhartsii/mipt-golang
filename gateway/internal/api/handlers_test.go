@@ -259,6 +259,10 @@ func (validationService) AddTransaction(_ context.Context, tx ledger.Transaction
 	return tx, nil
 }
 
+func (validationService) ImportTransactions(context.Context, []ledger.Transaction, int) (ledger.ImportSummary, error) {
+	return ledger.ImportSummary{}, nil
+}
+
 func (validationService) ListBudgets(context.Context) ([]ledger.Budget, error) { return nil, nil }
 func (validationService) ListTransactions(context.Context) ([]ledger.Transaction, error) {
 	return nil, nil
