@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"gateway/internal/api"
+	"gateway/internal/web"
 	"ledger"
 )
 
@@ -32,7 +33,7 @@ func run() error {
 	defer closeFn()
 
 	log.Printf("Gateway service started on %s (request timeout: %s)", addr, timeout)
-	return http.ListenAndServe(addr, api.NewRouter(svc, timeout))
+	return http.ListenAndServe(addr, web.NewRouter(api.NewRouter(svc, timeout)))
 }
 
 func requestTimeoutFromEnv() (time.Duration, error) {
