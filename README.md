@@ -236,3 +236,139 @@ export TEST_DATABASE_URL='postgres://postgres:postgres@localhost:5432/cashapp_te
 Подготовка отдельной тестовой БД описана в [ledger/README.md](ledger/README.md).
 Без `TEST_DATABASE_URL` проверки PostgreSQL пропускаются; проверки пула, коллектора,
 отмены, частичной сводки и HTTP-контракта выполняются без БД.
+
+## hw-11 — Docker и Compose
+
+`gateway/Dockerfile` и `ledger/Dockerfile` используют два этапа: Go 1.26 для сборки
+(`CGO_ENABLED=0`, `-ldflags="-s -w"`) и Alpine 3.23 для запуска от непривилегированного пользователя.
+Версия Go соответствует `go 1.26.3` в модулях. В образе Ledger запускается существующая
+консольная демонстрация `cmd/ledger`, рядом с бинарником находится её `budgets.json`.
+
+В Compose работают `db` (PostgreSQL 18), `redis` и `gateway`. Redis нужен существующей
+фабрике Ledger и кешу из предыдущих заданий. Отдельного сервиса `ledger` пока нет:
+Gateway по-прежнему импортирует его как библиотеку; отдельный контейнер появится в ДЗ 12.
+Все три сервиса имеют healthcheck, Gateway ждёт готовности PostgreSQL и Redis.
+
+### Подготовка и сборка образов
+
+Нужны запущенный Docker, BuildKit/Buildx, Docker Compose 2.17+ и Goose
+(установка описана в [ledger/README.md](ledger/README.md#миграции-goose)).
+Все команды ниже выполняются **из корня репозитория**.
+
+Из-за `replace ledger => ../ledger` сборке Gateway нужны исходники соседнего модуля.
+Основной контекст остаётся `./gateway`, а Ledger передаётся через дополнительный контекст
+`ledger`: в Compose он задан через `build.additional_contexts`, в CLI — через `--build-context`.
+Это передача исходников библиотеки, а не запуск или сборка отдельного сервиса Ledger.
+
+```bash
+docker build --build-context ledger=./ledger -t cashcraft-gateway:hw11 ./gateway
+docker build -t cashcraft-ledger:hw11 ./ledger
+```
+
+Для пересборки Gateway средствами Compose можно использовать `docker compose build gateway`.
+
+### Запуск PostgreSQL и применение миграций
+
+1. Запустите PostgreSQL и дождитесь `healthy` в столбце `STATUS`:
+
+   ```bash
+   docker compose up -d db
+   docker compose ps db
+   ```
+
+   Порт по умолчанию — `127.0.0.1:5432`. Если он занят локальной БД, перед запуском
+   выполните `export POSTGRES_PORT=55432` и используйте ту же переменную во всех шагах.
+   Альтернатива ручному ожиданию: `docker compose up -d --wait db`.
+
+2. Примените существующие миграции Goose через опубликованный порт:
+
+   ```bash
+   export DATABASE_URL="postgres://postgres:postgres@localhost:${POSTGRES_PORT:-5432}/cashapp?sslmode=disable"
+   goose -dir ./ledger/migrations postgres "$DATABASE_URL" up
+   goose -dir ./ledger/migrations postgres "$DATABASE_URL" status
+   ```
+
+   С хоста БД доступна через `localhost`, внутри Compose — через `db:5432`.
+   В `docker-compose.yml` Gateway получает именно адрес `db`, а Redis — `redis:6379`.
+   Имя базы во всех шагах — `cashapp`. Миграции запускаются явно, отдельного сервиса для них нет.
+
+3. Запустите Gateway; Compose также запустит Redis и дождётся его готовности:
+
+   ```bash
+   docker compose up -d gateway
+   docker compose ps
+   docker compose logs gateway
+   ```
+
+   После сборки образа на предыдущем шаге этот запуск использует `cashcraft-gateway:hw11`.
+   Дождитесь `healthy` у Gateway. В логах должны быть подключения к PostgreSQL и Redis
+   и сообщение `Gateway service started on :8080`.
+
+### Проверка API и записи в БД
+
+```bash
+# С хоста: 200 OK и {"message":"pong"} — существующий формат API
+curl -i http://localhost:8080/ping
+
+# Из контейнера: тот же запрос используется healthcheck
+docker compose exec gateway wget -qO- http://localhost:8080/ping
+docker compose exec gateway wget -qO- http://localhost:8080/api/budgets
+
+# Бюджет: 201 Created, затем список с созданной категорией
+curl -i -X POST http://localhost:8080/api/budgets \
+  -H 'Content-Type: application/json' \
+  -d '{"category":"docker-demo","limit":5000}'
+curl -i http://localhost:8080/api/budgets
+
+# Транзакция: 201 Created
+curl -i -X POST http://localhost:8080/api/transactions \
+  -H 'Content-Type: application/json' \
+  -d '{"amount":350,"category":"docker-demo","description":"Обед","date":"2026-11-01"}'
+
+# Пакет: 200 OK, accepted=1, rejected=1 (вторая сумма невалидна)
+curl -i -X POST 'http://localhost:8080/api/transactions/bulk?workers=4' \
+  -H 'Content-Type: application/json' \
+  -d '[{"amount":150,"category":"docker-demo","date":"2026-11-02"},{"amount":0,"category":"docker-demo","date":"2026-11-02"}]'
+
+curl -i http://localhost:8080/api/transactions
+curl -i 'http://localhost:8080/api/reports/summary?from=2026-11-01&to=2026-11-30'
+
+# Проверка фактически сохранённых строк в PostgreSQL
+docker compose exec db psql -U postgres -d cashapp \
+  -c "SELECT category, limit_amount FROM budgets WHERE category = 'docker-demo';" \
+  -c "SELECT amount, category, date FROM expenses WHERE category = 'docker-demo' ORDER BY id;"
+```
+
+При первом выполнении на пустой БД сохраняются две транзакции на общую сумму 500,
+отчёт возвращает `total: 500`. Повторный запуск POST создаёт новые расходы и учитывает
+уже потраченную сумму. Отчёт кешируется на 30 секунд, как в предыдущих заданиях.
+
+### Отдельный запуск Gateway через docker run
+
+После применения миграций запустите Redis и освободите порт 8080, остановив Gateway в Compose:
+
+```bash
+docker compose up -d --wait db redis
+docker compose stop gateway
+docker run --rm --name cashcraft-gateway-manual --network cashcraft_default \
+  -p 8080:8080 \
+  -e DATABASE_URL='postgres://postgres:postgres@db:5432/cashapp?sslmode=disable' \
+  -e REDIS_ADDR=redis:6379 \
+  cashcraft-gateway:hw11
+```
+
+В другом терминале выполните `curl -i http://localhost:8080/ping` — ожидается `200 OK`
+с JSON-ответом `{"message":"pong"}`. Имя сети `cashcraft_default` задаётся именем проекта `cashcraft`
+в Compose; если вы переопределили имя проекта через `-p`, замените и имя сети.
+Завершите ручной запуск через Ctrl+C, затем верните сервис командой `docker compose up -d gateway`.
+Ledger в этом задании достаточно собрать; его консольная демонстрация не является HTTP-сервером.
+
+### Остановка и сохранность данных
+
+```bash
+docker compose down
+```
+
+Данные PostgreSQL остаются в именованном томе `postgres_data`, подключённом к
+`/var/lib/postgresql` (путь официального образа PostgreSQL 18). При следующем запуске
+бюджеты и транзакции сохранятся. Не добавляйте `-v`, если данные нужно сохранить.
