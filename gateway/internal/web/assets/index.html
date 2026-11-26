@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#183f35">
+  <meta name="description" content="Учёт расходов, бюджеты и понятный результат пакетного импорта в Ledger.">
+  <title>Ledger — учёт расходов</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Перейти к содержимому</a>
+  <header class="header">
+    <div class="header__inner">
+      <a class="brand" href="#main" aria-label="Ledger, главная"><span class="brand__mark" aria-hidden="true"><i></i><i></i><i></i></span>ledger<span class="brand__period">.</span></a>
+      <nav class="navigation" aria-label="Разделы страницы">
+        <a class="navigation__primary" href="#import">Импорт</a>
+        <a href="#transactions">Транзакции</a>
+        <a href="#budgets">Бюджеты</a>
+      </nav>
+      <span class="connection" id="connection" role="status">Подключаемся…</span>
+    </div>
+  </header>
+
+  <main class="page" id="main">
+    <section class="intro" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">ТВОЙ УЧЁТ РАСХОДОВ</p>
+        <h1 id="page-title">Деньги — по полочкам.</h1>
+        <p class="intro__description">Задавай лимиты, добавляй расходы и смотри, что происходит с каждой записью.</p>
+      </div>
+      <button class="button button--secondary" id="refresh" type="button">Обновить данные</button>
+    </section>
+    <noscript><p class="notice notice--error">Для работы интерфейса нужен JavaScript. API доступен независимо от этой страницы.</p></noscript>
+    <p class="notice notice--error" id="load-message" role="alert" hidden></p>
+
+    <section class="overview" aria-label="Обзор сохранённых данных">
+      <div class="stat stat--accent"><span class="stat__label">Всего расходов</span><strong class="stat__value" id="total-spent">—</strong><span class="stat__hint">За всё время</span></div>
+      <div class="stat"><span class="stat__label">Транзакций в учёте</span><strong class="stat__value" id="transaction-count">—</strong><span class="stat__hint">Успешно сохранены в базе</span></div>
+      <div class="stat"><span class="stat__label">Бюджетов категорий</span><strong class="stat__value" id="budget-count">—</strong><span class="stat__hint">Лимиты помогают контролировать расходы</span></div>
+    </section>
+
+    <div class="workspace">
+      <section class="panel import" id="import" aria-labelledby="import-title">
+        <div class="panel__heading">
+          <div><p class="eyebrow">НЕСКОЛЬКО ЗАПИСЕЙ ЗА РАЗ</p><h2 id="import-title">Пакетный импорт</h2></div>
+          <span class="tag">POST /bulk</span>
+        </div>
+        <p class="muted">Вставь массив расходов или загрузи JSON-файл. Ledger проверит каждую запись и сохранит допустимые.</p>
+        <form id="import-form">
+          <fieldset id="import-fields">
+            <div class="editor-toolbar">
+              <label class="field-label" for="import-json">Транзакции в JSON</label>
+              <div class="editor-toolbar__actions">
+                <button class="text-button" id="sample" type="button">Вставить пример</button>
+                <label class="file-button">Загрузить .json<input id="import-file" type="file" accept=".json,application/json" aria-label="Загрузить JSON-файл"></label>
+              </div>
+            </div>
+            <textarea id="import-json" class="editor" spellcheck="false" aria-describedby="input-info sample-hint" required></textarea>
+            <div class="editor-footer"><span id="input-info" role="status">Массив транзакций</span><span>UTF-8 · JSON</span></div>
+            <p class="hint" id="sample-hint">В примере есть нулевая сумма. Сохрани бюджет «Продукты» на 5 000 ₽, чтобы увидеть ещё и отказ по лимиту.</p>
+            <div class="import-controls">
+              <div class="worker-control">
+                <label class="field-label" for="workers">Воркеры</label>
+                <input id="workers" name="workers" type="number" min="1" max="64" step="1" value="4" required aria-describedby="workers-hint">
+                <span class="hint" id="workers-hint">От 1 до 64 параллельных обработчиков</span>
+              </div>
+              <button class="button button--primary" id="import-submit" type="submit">Импортировать</button>
+            </div>
+          </fieldset>
+        </form>
+        <div class="import-progress" id="import-progress" role="status" hidden><span class="spinner" aria-hidden="true"></span><span>Ledger обрабатывает записи…</span><button class="text-button" id="cancel-import" type="button">Отменить запрос</button></div>
+        <p class="notice" id="import-message" role="status" hidden></p>
+
+        <div class="import-result" id="import-result" hidden>
+          <div class="result-heading"><h3>Результат импорта</h3><span class="hint" id="import-duration"></span></div>
+          <div class="result-stats"><div><span>Принято</span><strong id="accepted">0</strong></div><div><span>Отклонено</span><strong id="rejected">0</strong></div></div>
+          <ul class="error-list" id="import-errors" aria-label="Причины отклонения записей"></ul>
+        </div>
+        <details class="details" id="response-details" hidden><summary>Посмотреть ответ API</summary><pre class="code" id="api-response"></pre></details>
+        <details class="details explanation">
+          <summary>Что происходит под капотом?</summary>
+          <div class="pipeline"><span>Браузер</span><span>Gateway</span><span>Воркеры Ledger</span><span>База данных</span></div>
+          <p>Gateway передаёт массив в Ledger. Канал <code>jobs</code> раздаёт записи воркерам. Они проверяют сумму, категорию, дату и остаток бюджета, затем сохраняют расход.</p>
+          <p>Коллектор читает канал <code>results</code> и собирает сводку. Ошибка одной записи не мешает остальным. Индекс ошибки начинается с нуля; порядок обработки может отличаться от порядка в массиве.</p>
+          <p>Лимит категории проверяется под блокировкой в базе, поэтому одновременные записи не могут вместе превысить бюджет. Интерфейс получает итоговый ответ — ход отдельных воркеров API не передаёт.</p>
+        </details>
+      </section>
+
+      <aside class="budget-column" id="budgets" aria-labelledby="budgets-title">
+        <section class="panel">
+          <div class="panel__heading"><div><p class="eyebrow">ПРАВИЛА ДЛЯ РАСХОДОВ</p><h2 id="budgets-title">Бюджеты</h2></div></div>
+          <p class="muted">Укажи, сколько можно потратить в категории. Всё сверх лимита будет отклонено.</p>
+          <form id="budget-form">
+            <fieldset id="budget-fields" class="form-stack">
+              <label class="field-label" for="budget-category">Категория<input id="budget-category" name="category" list="categories" value="Продукты" required></label>
+              <label class="field-label" for="budget-limit">Лимит, ₽<input id="budget-limit" name="limit" type="number" min="0.01" step="0.01" value="5000" required></label>
+              <button class="button button--primary button--wide" id="budget-submit" type="submit">Сохранить бюджет</button>
+            </fieldset>
+          </form>
+          <p class="notice" id="budget-message" role="status" hidden></p>
+          <p class="hint">Лимит действует на все расходы категории за всё время. Повторное сохранение обновляет его. Без бюджета категория не ограничена.</p>
+          <div class="budget-list" id="budget-list"><p class="empty">Загружаем бюджеты…</p></div>
+        </section>
+        <div class="note"><span class="note__label">ПОПРОБУЙ САМ</span><p>Сохрани бюджет, импортируй пример и сравни результат со списком расходов ниже. Отклонённые записи в него не попадут.</p></div>
+      </aside>
+    </div>
+
+    <section class="panel transactions" id="transactions" aria-labelledby="transactions-title">
+      <div class="panel__heading"><div><p class="eyebrow">ТОЛЬКО СОХРАНЁННЫЕ ЗАПИСИ</p><h2 id="transactions-title">Транзакции</h2></div><button class="button button--secondary" id="toggle-transaction" type="button" aria-expanded="false" aria-controls="transaction-form">Добавить расход</button></div>
+      <form id="transaction-form" hidden>
+        <fieldset id="transaction-fields" class="transaction-form">
+          <label class="field-label" for="transaction-amount">Сумма, ₽<input id="transaction-amount" name="amount" type="number" min="0.01" step="0.01" required></label>
+          <label class="field-label" for="transaction-category">Категория<input id="transaction-category" name="category" list="categories" required></label>
+          <label class="field-label" for="transaction-date">Дата<input id="transaction-date" name="date" type="date" required></label>
+          <label class="field-label" for="transaction-description">Описание<input id="transaction-description" name="description" placeholder="Например, продукты на неделю"></label>
+          <button class="button button--primary" id="transaction-submit" type="submit">Сохранить расход</button>
+        </fieldset>
+      </form>
+      <p class="notice" id="transaction-message" role="status" hidden></p>
+      <label class="search" for="search"><span class="field-label">Поиск по категории или описанию</span><input id="search" type="search" placeholder="Найти расход…"></label>
+      <div class="table-scroll"><table><caption class="sr-only">Сохранённые расходы</caption><thead><tr><th scope="col">Дата</th><th scope="col">Категория</th><th scope="col">Описание</th><th scope="col" class="amount">Сумма</th></tr></thead><tbody id="transaction-list"><tr><td colspan="4" class="empty">Загружаем расходы…</td></tr></tbody></table></div>
+      <p class="hint table-caption" id="transaction-info" role="status"></p>
+    </section>
+    <datalist id="categories"></datalist>
+    <footer class="footer"><span>ledger. <span class="muted">Маленький интерфейс к настоящему API.</span></span><span>Go · Gateway + Ledger</span></footer>
+  </main>
+</body>
+</html>
